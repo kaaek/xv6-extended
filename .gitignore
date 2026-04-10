@@ -1,16 +1,25 @@
-*~
-_*
+# Compiled object files
 *.o
 *.d
+
+# Build artifacts
 *.asm
 *.sym
+
+# Binaries and images
 *.img
-vectors.S
 bootblock
 entryother
 initcode
 initcode.out
 kernel
-kernelmemfs
 mkfs
+xv6.img
+fs.img
+
+# User programs (prefixed with _)
+_*
+
+# Misc
 .gdbinit
+EOF

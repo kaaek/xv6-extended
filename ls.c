@@ -70,16 +70,105 @@ ls(char *path)
   close(fd);
 }
 
+// Added wildcard matcher below here: match (pattern, name) returns 1 if the name matches the pattern, and 0 otherwise.
+// Wildcard * means zero or more of any character
+
+int match(char *pattern, char *name)
+{ // The arguments are two strings pattern (requested query, such as *.c), and name (the file name found in the current directoru with dirent)
+ 
+  if (*pattern == '\0')
+    return *name == '\0'; // 1: both are exhausted, i.e. full match. 0: pattern is exhausted but the name is not, i.e. no match
+
+  // Current pattern char is '*'
+  else if(*pattern == '*'){
+    // '*' can match zero characters: skip it and retry
+    if(match(pattern + 1, name))
+      return 1;
+    // '*' can match one character: advance name and retry (if name not empty)
+    else if(*name != '\0' && match(pattern, name + 1))
+      return 1;
+    return 0;
+  }
+ 
+  // Current pattern char is a literal: must match exactly
+  if(*pattern == *name)
+    return match(pattern + 1, name + 1);
+ 
+  return 0;
+}
+
+
+// Added ls_wild(...), a variant on ls(...) meant to deal with arguments that include wildcards *
+
+void
+ls_wild(char *pattern)
+{
+  int fd;
+  struct dirent de;
+  struct stat st;
+  char buf[512];
+ 
+  if((fd = open(".", 0)) < 0){
+    printf(2, "ls: cannot open current directory\n");
+    return;
+  }
+ 
+  while(read(fd, &de, sizeof(de)) == sizeof(de)){ // Enumerate contents of the current directory (files and other directories)
+    if(de.inum == 0)
+      continue;
+ 
+    // Build a proper NUL-terminated name from the fixed-width dirent field
+    char name[DIRSIZ + 1];
+    memmove(name, de.name, DIRSIZ);
+    name[DIRSIZ] = '\0';
+ 
+    // Skip . and ..
+    if(name[0] == '.' && (name[1] == '\0' ||
+       (name[1] == '.' && name[2] == '\0')))
+      continue;
+ 
+    if(!match(pattern, name))
+      continue;
+ 
+    // Stat the matched file for type/inode/size
+    buf[0] = '\0';
+    strcpy(buf, name);
+    if(stat(buf, &st) < 0){
+      printf(1, "ls: cannot stat %s\n", buf);
+      continue;
+    }
+ 
+    printf(1, "%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+  }
+ 
+  close(fd);
+}
+
 int
 main(int argc, char *argv[])
 {
   int i;
-
+ 
   if(argc < 2){
     ls(".");
     exit();
   }
-  for(i=1; i<argc; i++)
-    ls(argv[i]);
+ 
+  for(i = 1; i < argc; i++){ // Added this loop to check for wildcards * in the case 1+ arguments are supplied.
+    int has_wild = 0;
+    char *p;
+    for(p = argv[i]; *p; p++){ // Loop through the characters in the argument argv[i] to check for wildcard *
+      if(*p == '*'){
+        has_wild = 1;
+        break;
+      }
+    }
+ 
+    if(has_wild)
+      ls_wild(argv[i]); // Used when wildcards * are detected. The argument with the wildcard is passed as a pattern
+    else
+      ls(argv[i]);
+  }
+ 
   exit();
 }

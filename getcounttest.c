@@ -4,7 +4,7 @@
 
 int main(int argc, char *argv[])
 {
-    printf(1, "Number of system calls invoked since boot: %d\n", get_syscall_count());
+    printf(1, "Number of system calls invoked: %d\n", get_syscall_count());
 
     exit();
 }

@@ -89,3 +89,11 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//returns the number of system calls invoked
+int syscallCount;
+int
+sys_get_syscall_count(void)
+{
+  return syscallCount;
+}

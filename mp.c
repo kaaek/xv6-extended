@@ -32,7 +32,7 @@ mpsearch1(uint a, int len)
 {
   uchar *e, *p, *addr;
 
-  addr = P2V(a);
+  addr = (uchar*)P2V_WO(a);
   e = addr+len;
   for(p = addr; p < e; p += sizeof(struct mp))
     if(memcmp(p, "_MP_", 4) == 0 && sum(p, sizeof(struct mp)) == 0)
@@ -52,7 +52,7 @@ mpsearch(void)
   uint p;
   struct mp *mp;
 
-  bda = (uchar *) P2V(0x400);
+  bda = (uchar*)P2V_WO(0x400);
   if((p = ((bda[0x0F]<<8)| bda[0x0E]) << 4)){
     if((mp = mpsearch1(p, 1024)))
       return mp;
@@ -74,15 +74,21 @@ mpconfig(struct mp **pmp)
 {
   struct mpconf *conf;
   struct mp *mp;
+  uint pa;
+  int len;
 
   if((mp = mpsearch()) == 0 || mp->physaddr == 0)
     return 0;
-  conf = (struct mpconf*) P2V((uint) mp->physaddr);
+  pa = (uint)mp->physaddr;
+  conf = (struct mpconf*)P2V_WO(pa);
   if(memcmp(conf, "PCMP", 4) != 0)
     return 0;
   if(conf->version != 1 && conf->version != 4)
     return 0;
-  if(sum((uchar*)conf, conf->length) != 0)
+  len = conf->length;
+  if(len < sizeof(*conf) || len > 1024)
+    return 0;
+  if(sum((uchar*)conf, len) != 0)
     return 0;
   *pmp = mp;
   return conf;

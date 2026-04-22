@@ -20,6 +20,20 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+// ptable lock must be held.
+static int
+pgdir_refcnt_locked(pde_t *pgdir)
+{
+  struct proc *p;
+  int cnt = 0;
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != UNUSED && p->pgdir == pgdir)
+      cnt++;
+  }
+  return cnt;
+}
+
 void
 pinit(void)
 {
@@ -158,6 +172,7 @@ userinit(void)
 int
 growproc(int n)
 {
+  struct proc *p;
   uint sz;
   struct proc *curproc = myproc();
 
@@ -169,7 +184,15 @@ growproc(int n)
     if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
   }
-  curproc->sz = sz;
+
+  // Threads share pgdir; keep each proc's cached size in sync.
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != UNUSED && p->pgdir == curproc->pgdir)
+      p->sz = sz;
+  }
+  release(&ptable.lock);
+
   switchuvm(curproc);
   return 0;
 }
@@ -219,6 +242,123 @@ fork(void)
   release(&ptable.lock);
 
   return pid;
+}
+
+int clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack) {
+  int i, pid;
+  struct proc *np;
+  struct proc *curproc = myproc();
+
+  // The user-supplied stack must be page-aligned and point to
+  // at least one full user page inside the current address space.
+  if(((uint)stack % PGSIZE) != 0)
+    return -1;
+
+  if((uint)stack >= curproc->sz || (curproc->sz - (uint)stack) < PGSIZE)
+    return -1;
+
+  // Allocate a new schedulable entity (thread) with its own kernel stack.
+  if((np = allocproc()) == 0)
+    return -1;
+
+  // Thread semantics: share the same address space as the parent.
+  np->pgdir = curproc->pgdir;
+
+  // Build the initial user stack frame for fcn(arg1, arg2):
+  // fake return PC, then arg1 and arg2.
+  int user_stack[3];
+  uint stack_pointer = (uint)stack + PGSIZE;
+  user_stack[0] = 0xffffffff;
+  user_stack[1] = (uint)arg1;
+  user_stack[2] = (uint)arg2;
+  stack_pointer -= 12;
+  if(copyout(np->pgdir, stack_pointer, user_stack, 12) < 0){
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+    return -1;
+  }
+
+  np->sz = curproc->sz;
+  np->parent = curproc;
+  *np->tf = *curproc->tf;
+
+  // Child-side return value from clone is 0.
+  np->tf->eax = 0;
+
+  // Start execution at the requested function with prepared stack.
+  np->tf->esp = (uint)stack_pointer;
+  np->tf->eip = (uint)fcn;
+  // Remember stack so join() can hand it back for user-level free.
+  np->stack = stack;
+
+  for(i = 0; i < NOFILE; i++)
+    if(curproc->ofile[i])
+      np->ofile[i] = filedup(curproc->ofile[i]);
+  np->cwd = idup(curproc->cwd);
+ 
+  pid = np->pid;
+
+  // Publish the new thread to the scheduler while holding ptable lock.
+  acquire(&ptable.lock);
+  np->state = RUNNABLE;
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+  curproc->thread_count++;
+  np->thread_count = curproc->thread_count;
+  release(&ptable.lock);
+
+  return pid;
+}
+
+int join(void **stack)
+{
+  struct proc *p;
+  int havekids, pid;
+  struct proc *curproc = myproc();
+
+  // Wait until a child thread (same parent and same pgdir) exits.
+  acquire(&ptable.lock);
+  for(;;){
+    // Scan through table looking for zombie children.
+    havekids = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent != curproc || p->pgdir != curproc->pgdir)
+        continue;
+      havekids = 1;
+      if(p->state != ZOMBIE)
+        continue;
+
+      // Found a terminated thread in this process's thread group.
+      curproc->thread_count--;
+      // Return its user stack so user space can reclaim it.
+      *stack = p->stack;
+      pid = p->pid;
+      // Free kernel-only resources and recycle the proc slot.
+      kfree(p->kstack);
+      p->kstack = 0;
+      p->state = UNUSED;
+      p->pid = 0;
+      p->parent = 0;
+      p->pgdir = 0;
+      p->sz = 0;
+      p->stack = 0;
+      p->name[0] = 0;
+      p->killed = 0;
+      p->thread_count = 0;
+      release(&ptable.lock);
+      return pid;
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
+
 }
 
 // Exit the current process.  Does not return.
@@ -289,7 +429,10 @@ wait(void)
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        if(p->pgdir && pgdir_refcnt_locked(p->pgdir) == 1)
+          freevm(p->pgdir);
+        p->pgdir = 0;
+        p->sz = 0;
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;

@@ -154,12 +154,23 @@ main(void)
       break;
     }
   }
-
+  int n; // Temporary variable used for storing buffer length in the loop.
   // Read and run input commands.
   while(getcmd(buf, sizeof(buf)) >= 0){
-    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
+
+    int historyFileDescriptor = open("sh_history", O_WRONLY|O_CREATE|O_APPEND); // Log every command line, once per prompt
+    if(historyFileDescriptor >= 0) {
+      n = strlen(buf);
+      if (n > 1) { // Checks for new lines: if this condition passes, then the command is not an empty line. Output it.
+        write(historyFileDescriptor, buf, n); // writes each command (loop) from `sh_history` to the buffer `buf`.
+      }
+      close(historyFileDescriptor);
+    }
+
+    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){ // Check if the command is `cd`
       // Chdir must be called by the parent, not the child.
       buf[strlen(buf)-1] = 0;  // chop \n
+      
       if(chdir(buf+3) < 0)
         printf(2, "cannot cd %s\n", buf+3);
       continue;

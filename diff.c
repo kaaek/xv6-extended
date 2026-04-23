@@ -2,11 +2,28 @@
 #include "user.h"
 #include "stat.h"
 
+int readLine(int fd, char *buf, int max){ // Helper for reading differing lines
+  int i = 0;
+  char c;
+  int n;
+
+  while(i < max - 1){         // Read one logical line (or until buffer is full/EOF).
+    n = read(fd, &c, 1);
+    if(n < 0) return -1;      // read error
+    if(n == 0) break;         // EOF, break if one of the files ends (n = 0 means that it reached EOF as EOF is 0)
+    buf[i++] = c;             // Append to output string
+    if(c == '\n') break;      // new line, stop.
+  }
+
+  buf[i] = '\0';              // Add a null character
+  return i;                   // 0 means EOF with no data
+}
+
 int main(int argc, char *argv[]){
     //Store the name of both files passed as argument 
     char* file1Name;
     char* file2Name;
-    if(argc > 2){
+    if(argc > 3){
         printf(1, "Error: no more than 2 arguments can be passed\n");
         exit();
     }
@@ -27,47 +44,53 @@ int main(int argc, char *argv[]){
         exit();
     }
 
-    //read both files
-    char buffer1[512], buffer2[512];
+    // Read files line-by-line and compare corresponding lines.
+    char line1[512], line2[512];
     int n1, n2;
-    int i = 0;
+    int lineNo = 1;
 
-    //break if one of the files ends (n = 0 means that it reached EOF as EOF is 0)
-    while ((n1 = read(file1, buffer1, sizeof(buffer1)) != 0) || (n1 = read(file1, buffer1, sizeof(buffer1)) != 0))
-    {
-        
-        if(buffer1[i] != buffer2[i]){
-            printf(1, "%c", buffer2[i]);
-        }
-        
-        i++;
-        if(i > 512){
-            i = 0;
-        }
+    while(1){
+    n1 = readLine(file1, line1, sizeof(line1));
+    n2 = readLine(file2, line2, sizeof(line2));
+
+    if(n1 < 0 || n2 < 0){
+        printf(1, "Error: read failed\n");
+        exit();
     }
 
-    //if only one file ends, continue reading the other and output the content as it differs from the first
-    if(n1 != 0){
-        while ((n1 = read(file1, buffer1, sizeof(buffer1)) == 0))
-        {
-            printf("%c", buffer1[i]);
-            i++;
-            if(i > 512){
-                i = 0;
-            }
+    if(n1 == 0 && n2 == 0){
+        break; // both EOF
+    }
+
+    // Mark different if lengths differ or any byte differs.
+    int same = 1;
+    if(n1 != n2){
+        same = 0;
+    } else {
+        int i;
+        for(i = 0; i < n1; i++){
+        if(line1[i] != line2[i]){
+            same = 0;
+            break;
+        }
         }
     }
-    else if(n2 != 0){
-        while ((n2 = read(file2, buffer2, sizeof(buffer2)) == 0))
-        {
-            printf("%c", buffer2[i]);
-            i++;
-            if(i > 512){
-                i = 0;
-            }
-        }
+
+    if(!same){
+        // Print mismatched line pairs.
+        printf(1, "line %d\n", lineNo);
+
+        printf(1, "%s: %s", file1Name, line1);
+        if(n1 > 0 && line1[n1 - 1] != '\n')
+            printf(1, "\n");
+
+        printf(1, "%s: %s", file2Name, line2);
+        if(n2 > 0 && line2[n2 - 1] != '\n')
+            printf(1, "\n");
     }
-    
+
+    lineNo++;
+    }    
 
     exit();
 }

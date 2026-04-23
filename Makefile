@@ -186,8 +186,8 @@ UPROGS=\
 	_tree\
 	_diff\
 
-fs.img: mkfs README $(UPROGS)
-	./mkfs fs.img README $(UPROGS)
+fs.img: mkfs README text1 text2 $(UPROGS)
+	./mkfs fs.img README text1 text2 $(UPROGS)
 
 -include *.d
 

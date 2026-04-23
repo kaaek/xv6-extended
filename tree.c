@@ -12,7 +12,7 @@ void printDirectory(char* path, char* name, int indent){
     //Check whether the path is that of a file or of a folder (a directory) with fstat() which takes as arguments the file 
     //descriptor of the file/folder and the address of the stat struct. The information about the path will be put into the
     //stat struct.
-    struct stat* st = (struct stat*) malloc(sizeof(struct stat*));
+    struct stat* st = (struct stat*) malloc(sizeof(struct stat));
     int fd = open(path, 0);
     if(fd < 0){
         printf(1, "Error: unable to open %s\n", path);
@@ -27,6 +27,7 @@ void printDirectory(char* path, char* name, int indent){
             printf(1, " ");
         }
         printf(1, "%s\n", name);
+        close(fd);
     }
     else if(st->type == T_DIR){
         //recursive case
@@ -39,26 +40,38 @@ void printDirectory(char* path, char* name, int indent){
         struct dirent de;
         int n;
         while ((n = read(fd, &de, sizeof(de))) == sizeof(de)){
+            char entryName[DIRSIZ + 1];
+
+            // dirent names are fixed-width and may not be NUL-terminated.
+            memmove(entryName, de.name, DIRSIZ);
+            entryName[DIRSIZ] = '\0';
+
             //skip empty slots (specified by the inum attribute being set to 0) and other invalid files (like . and ..)
-            if(de.inum != 0 && strcmp(de.name, ".") != 0 && strcmp(de.name, "..") != 0){
+            if(de.inum != 0 && strcmp(entryName, ".") != 0 && strcmp(entryName, "..") != 0){
                 //3) Construct the path of each of the subdirectories or files contained in the directory
                 char buffer[512];
+                if(strlen(path) + 1 + DIRSIZ + 1 > sizeof(buffer)){
+                    printf(1, "tree: path too long\n");
+                    continue;
+                }
                 strcpy(buffer, path);
                 char *p = buffer + strlen(buffer);
-                p++;
-                *p = '/';
-                strcpy(p, de.name);
+                *p++ = '/';
+                strcpy(p, entryName);
                 //4) Invoke the method itself by passing the newly formed path and the name of the file/directory and the incremented
                 // indentation
-                printDirectory(buffer, de.name, (indent + 10));
+                printDirectory(buffer, entryName, (indent + 10));
             }
         }
         close(fd);
     }
     else{
         printf(1, "An error has occured\n");
+        close(fd);
+        free(st);
         exit();
     }
+    free(st);
 }
 
 int main(int argc, char *argv[]){

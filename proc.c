@@ -7,12 +7,15 @@
 #include "proc.h"
 #include "spinlock.h"
 
+extern uint ticks;  // Global tick counter from trap.c
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
 
 static struct proc *initproc;
+static uint last_boost_ticks = 0;  // Track last priority boost time for MLFQ
 
 int nextpid = 1;
 extern void forkret(void);
@@ -125,6 +128,10 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+
+  // Initialize MLFQ fields
+  p->queue_level = 0;         // New processes start at highest priority
+  p->ticks_used = 0;          // No ticks used in current time slice
 
   return p;
 }
@@ -458,10 +465,54 @@ wait(void)
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
-//  - choose a process to run
+//  - choose a process to run (using MLFQ)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+// Helper: Get time slice for a given MLFQ queue level
+static uint
+get_timeslice(int queue_level)
+{
+  switch(queue_level) {
+  case 0:
+    return MLFQ_TIMESLICE_L0;
+  case 1:
+    return MLFQ_TIMESLICE_L1;
+  case 2:
+    return MLFQ_TIMESLICE_L2;
+  default:
+    return MLFQ_TIMESLICE_L2;
+  }
+}
+
+// Helper: Demote a process to the next lower queue level
+static void
+demote_process(struct proc *p)
+{
+  if(p->queue_level < MLFQ_LEVELS - 1) {
+    p->queue_level++;
+  }
+  // Reset ticks when moving to new queue
+  p->ticks_used = 0;
+}
+
+// Helper: Boost all processes back to highest priority queue
+static void
+boost_all_processes(void)
+{
+  struct proc *p;
+  
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != UNUSED && p->state != ZOMBIE) {
+      p->queue_level = 0;
+      p->ticks_used = 0;
+    }
+  }
+  // Update the global boost timestamp
+  last_boost_ticks = ticks;
+}
+
 void
 scheduler(void)
 {
@@ -473,25 +524,33 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
-    // Loop over process table looking for process to run.
+    // Check if we need to boost all processes
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+    if(ticks - last_boost_ticks >= MLFQ_BOOST_INTERVAL) {
+      boost_all_processes();
+    }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+    // Loop through MLFQ levels in priority order (0 = highest)
+    for(int level = 0; level < MLFQ_LEVELS; level++) {
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state != RUNNABLE || p->queue_level != level)
+          continue;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+        // Switch to chosen process.  It is the process's job
+        // to release ptable.lock and then reacquire it
+        // before jumping back to us.
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        p->ticks_used = 0;  // Reset ticks when process starts running
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+      }
     }
     release(&ptable.lock);
 
@@ -528,8 +587,21 @@ sched(void)
 void
 yield(void)
 {
+  struct proc *p = myproc();
+  
   acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
+  
+  // Update ticks used in current time slice
+  p->ticks_used++;
+  
+  // Check if process exceeded its time slice for current queue level
+  uint timeslice = get_timeslice(p->queue_level);
+  if(p->ticks_used >= timeslice) {
+    // Demote process to next lower priority queue
+    demote_process(p);
+  }
+  
+  p->state = RUNNABLE;
   sched();
   release(&ptable.lock);
 }

@@ -32,6 +32,13 @@ struct context {
   uint eip;
 };
 
+// MLFQ (Multi-Level Feedback Queue) Scheduling Constants
+#define MLFQ_LEVELS 3                  // Number of priority levels
+#define MLFQ_BOOST_INTERVAL 100        // Ticks between priority boosts
+#define MLFQ_TIMESLICE_L0 4            // Time slice for level 0 (highest priority)
+#define MLFQ_TIMESLICE_L1 8            // Time slice for level 1
+#define MLFQ_TIMESLICE_L2 16           // Time slice for level 2 (lowest priority)
+
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -51,6 +58,8 @@ struct proc {
   char name[16];               // Process name (debugging)
   void *stack;                 // User stack for thread created by clone
   int thread_count;            // Number of threads in this process group
+  int queue_level;             // Current MLFQ queue level (0=highest, 2=lowest)
+  uint ticks_used;             // Ticks used in current time slice
 };
 
 // Process memory is laid out contiguously, low addresses first:

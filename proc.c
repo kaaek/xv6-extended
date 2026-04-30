@@ -487,8 +487,7 @@ get_timeslice(int queue_level)
 }
 
 // Helper: Demote a process to the next lower queue level
-static void
-demote_process(struct proc *p)
+static void demote_process(struct proc *p)
 {
   if(p->queue_level < MLFQ_LEVELS - 1) {
     p->queue_level++;
@@ -513,9 +512,7 @@ boost_all_processes(void)
   last_boost_ticks = ticks;
 }
 
-void
-scheduler(void)
-{
+void scheduler(void) {
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
@@ -584,9 +581,7 @@ sched(void)
 }
 
 // Give up the CPU for one scheduling round.
-void
-yield(void)
-{
+void yield(void) {
   struct proc *p = myproc();
   
   acquire(&ptable.lock);  //DOC: yieldlock
